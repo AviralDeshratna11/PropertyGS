@@ -46,6 +46,7 @@ class Settings(BaseSettings):
 
     # ── ZKP ───────────────────────────────────────────────────────────
     NOIR_PROVER_URL: str = "http://zkp-prover:8080"
+    NOIR_PROVER_API_KEY: str = ""
 
     # ── External Real Estate Data ─────────────────────────────────────
     DLD_API_KEY: str = ""                # Dubai Land Department REST API

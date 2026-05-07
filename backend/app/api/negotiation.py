@@ -1,9 +1,11 @@
 """MARL Negotiation API — manages bargaining sessions."""
 
 from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import StreamingResponse
+import asyncio, json
 from app.models.schemas import NegotiationStart, NegotiationState, NegotiationRound
 from app.agents.negotiation_engine import (
-    NegotiationEngine, AgentConfig, MarketContext, NegotiationAction,
+    NegotiationEngine, AgentConfig, MarketContext, NegotiationAction, MAPPOAgent,
 )
 from datetime import datetime, timezone
 import uuid
@@ -11,17 +13,15 @@ import uuid
 router = APIRouter()
 
 # In production, this would be initialized with trained checkpoints
-_engine_cache = {}
+_engine_cache: dict[str, MAPPOAgent] = {}
 
 
-def _get_or_create_engine(request: Request) -> NegotiationEngine:
-    """Lazy-init negotiation engine (would load MARL checkpoints in prod)."""
-    if "negotiation_engine" not in _engine_cache:
-        # In production: load from settings.MARL_CHECKPOINT_DIR
-        # For now, create with untrained agents (will use random policy)
-        from app.agents.negotiation_engine import MAPPOAgent
-        _engine_cache["negotiation_engine"] = True
-    return _engine_cache.get("_instance")
+def _get_or_create_engine(role: str) -> MAPPOAgent:
+    """Lazy-init a reusable MAPPO agent for the given role."""
+    cache_key = f"{role}_agent"
+    if cache_key not in _engine_cache:
+        _engine_cache[cache_key] = MAPPOAgent(role=role)
+    return _engine_cache[cache_key]
 
 
 @router.post("/start")
@@ -59,11 +59,15 @@ async def start_negotiation(payload: NegotiationStart, request: Request):
         comparable_sold_prices=[int(fmv * 0.95), int(fmv * 1.02), int(fmv * 0.98)],
     )
 
-    from app.agents.negotiation_engine import NegotiationEnvironment, MAPPOAgent
+    from app.agents.negotiation_engine import NegotiationEnvironment
+    from app.agents.marlin_orchestrator import generate_plan
     session_id = str(uuid.uuid4())[:12]
 
     env = NegotiationEnvironment(buyer_config, seller_config, market)
     env.reset()
+
+    # Generate an LLM-guided plan (MARLIN)
+    plan = generate_plan(buyer_config.__dict__, seller_config.__dict__, market.__dict__)
 
     # Store session in Redis
     redis = request.app.state.redis
@@ -97,12 +101,16 @@ async def start_negotiation(payload: NegotiationStart, request: Request):
         "fmv": fmv,
     })
 
+    # Persist the plan for transparency and human review
+    await redis.cache_set(f"neg_plan:{session_id}", plan, ttl=3600)
+
     return {
         "session_id": session_id,
         "status": "initiated",
         "initial_bid": env.current_bid,
         "initial_ask": env.current_ask,
         "fair_market_value": fmv,
+        "plan": plan,
         "max_rounds": 20,
         "trace_id": trace_id,
     }
@@ -154,8 +162,8 @@ async def execute_round(session_id: str, request: Request):
     env.round = state["round"]
 
     # Use trained agents or heuristic fallback
-    buyer_agent = MAPPOAgent(role="buyer")
-    seller_agent = MAPPOAgent(role="seller")
+    buyer_agent = _get_or_create_engine("buyer")
+    seller_agent = _get_or_create_engine("seller")
 
     buyer_obs = env._get_obs("buyer")
     seller_obs = env._get_obs("seller")
@@ -215,3 +223,26 @@ async def get_status(session_id: str, request: Request):
         "done": state["done"],
         "rounds": rounds,
     }
+
+
+@router.get("/{session_id}/stream")
+async def stream_session(session_id: str, request: Request):
+    """Server-Sent Events stream of negotiation rounds for a session."""
+
+    redis = request.app.state.redis
+
+    async def event_generator():
+        last_count = 0
+        # Send existing rounds first
+        try:
+            while not await request.is_disconnected():
+                rounds = await redis.get_rounds(session_id)
+                if len(rounds) > last_count:
+                    for r in rounds[last_count:]:
+                        yield f"data: {json.dumps(r)}\n\n"
+                    last_count = len(rounds)
+                await asyncio.sleep(1.0)
+        except asyncio.CancelledError:
+            return
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Request
 from app.models.schemas import ZKPProofRequest, ZKPProofResponse
 from app.circuits.zkp_verifier import ZKPVerifier
 from datetime import datetime, timezone
+import uuid
 
 router = APIRouter()
 verifier = ZKPVerifier()
@@ -42,7 +43,7 @@ async def verify_proof_of_funds(payload: ZKPProofRequest, request: Request):
 
     # Log to transparency ledger
     redis = request.app.state.redis
-    trace_id = getattr(request.state, "trace_id", "")
+    trace_id = getattr(request.state, "trace_id", str(uuid.uuid4()))
     await redis.log_decision(trace_id, {
         "agent": "zkp_verifier",
         "action": "proof_of_funds_verified",

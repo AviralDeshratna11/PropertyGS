@@ -123,6 +123,26 @@ class ZKPProofResponse(BaseModel):
     expires_at: datetime
 
 
+class ZKPassportRequest(BaseModel):
+    buyer_id: str
+    threshold_usd: int = Field(..., gt=0)
+
+
+class ZKPassportVerifyRequest(BaseModel):
+    token: str
+
+
+class ZKPassportResponse(BaseModel):
+    buyer_id: str
+    token: str
+    threshold_usd: int
+    proof_hash: str
+    issued_at: datetime
+    expires_at: datetime
+    verified: bool
+    note: Optional[str] = None
+
+
 # ── Settlement / Escrow ───────────────────────────────────────────────
 
 class EscrowCreate(BaseModel):

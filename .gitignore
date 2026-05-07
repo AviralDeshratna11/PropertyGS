@@ -2,6 +2,7 @@
 .env
 .env.local
 .env.*.local
+.env.production.local
 
 # Python
 __pycache__/
@@ -22,6 +23,18 @@ htmlcov/
 *.egg-info/
 dist/
 build/
+.tox/
+*.log
+
+# IDEs & Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*.bak
+*~
+.sublime-project
+.sublime-workspace
 
 # Node / frontend
 node_modules/
@@ -46,3 +59,28 @@ contracts/ignition/deployments/
 *.log
 .DS_Store
 Thumbs.db
+
+# Docker & Infrastructure
+docker-compose.override.yml
+.dockerignore
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Redis & Services
+dump.rdb
+appendonly.aof
+
+# MacOS
+.AppleDouble
+.LSOverride
+*.swp
+
+# Windows
+*.lnk
+
+# Misc
+*.pid

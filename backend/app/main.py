@@ -1,11 +1,12 @@
 """
-PropOS Phase 1 — Remote Investment Portal
-==========================================
+PropOS Phase 1+2 — Remote Investment Portal
+============================================
 Core FastAPI application orchestrating:
-  - Agentic Lifestyle Search (LLM + API fusion)
-  - MARL Negotiation Engine (MAPPO fiduciary bargaining)
-  - ZKP Verification Gateway
-  - Settlement Layer hooks
+    - Agentic Lifestyle Search (LLM + API fusion)
+    - MARL Negotiation Engine (MAPPO fiduciary bargaining)
+    - ZKP Verification Gateway
+    - Settlement Layer hooks
+    - Perception, inspection, IoT, and voice flows
 """
 
 from fastapi import FastAPI, Request
@@ -15,7 +16,7 @@ import time, uuid, logging
 
 from app.core.config import settings
 from app.core.logging import setup_logging
-from app.api import search, negotiation, verification, settlement, properties, phase2
+from app.api import search, negotiation, verification, settlement, properties, phase2, zkp_passport
 from app.services.redis_manager import RedisManager
 from app.services.db import engine, Base
 
@@ -47,9 +48,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="PropOS — Autonomous Real Estate Ecosystem",
-    version="1.0.0-phase1",
-    description="Phase 1: Remote Investment Portal with MARL Negotiation, "
-                "Agentic Lifestyle Search, ZKP Verification, and Smart Contract Settlement.",
+    version="1.1.0-phase1-2",
+    description="Phase 1+2: Remote Investment Portal with MARL Negotiation, "
+                "Agentic Lifestyle Search, ZKP Verification, Smart Contract Settlement, "
+                "and Perception / Inspection / IoT / Voice overlays.",
     lifespan=lifespan,
 )
 
@@ -94,8 +96,14 @@ app.include_router(verification.router,  prefix="/api/v1/verification", tags=["Z
 app.include_router(settlement.router,    prefix="/api/v1/settlement",   tags=["Blockchain Settlement"])
 app.include_router(properties.router,    prefix="/api/v1/properties",   tags=["Property Data"])
 app.include_router(phase2.router,        prefix="/api/v1",              tags=["Phase 2 — Perception, Inspection, IoT, Voice"])
+app.include_router(zkp_passport.router,  prefix="/api/v1",              tags=["ZKP Passports"])
 
 
 @app.get("/health")
 async def health():
-    return {"status": "operational", "phase": 1, "version": "1.0.0"}
+    return {
+        "status": "operational",
+        "phases": [1, 2],
+        "version": "1.1.0",
+        "phase2_status": "/api/v1/phase2/status",
+    }

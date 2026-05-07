@@ -1,12 +1,15 @@
 """Phase 2 API routes — Perception, Inspection, IoT, Voice."""
 
 from fastapi import APIRouter, Request, UploadFile, File, HTTPException
-from typing import Optional
+from typing import Optional, Callable, Any
 import numpy as np
-import uuid
-import time
+import logging
+from app.inspection.thermal import analyze_thermal_images
+from app.inspection.cracksgpt import generate_narratives
+from app.inspection.repair_estimator import estimate_repairs
 
 router = APIRouter()
+logger = logging.getLogger("propos.phase2")
 
 # ── Lazy singletons ──────────────────────────────────────────────────
 _perception = None
@@ -43,6 +46,23 @@ def _get_voice():
     return _voice
 
 
+def _resolve_component(factory: Callable[[], Any], component_name: str):
+    try:
+        return factory()
+    except Exception as exc:
+        logger.exception("%s initialization failed", component_name)
+        raise HTTPException(503, detail=f"{component_name} unavailable: {exc}") from exc
+
+
+def _probe_component(factory: Callable[[], Any], component_name: str) -> dict:
+    try:
+        factory()
+        return {"ready": True}
+    except Exception as exc:
+        logger.warning("%s probe failed: %s", component_name, exc)
+        return {"ready": False, "error": str(exc)}
+
+
 # ══════════════════════════════════════════════════════════════════════
 # PERCEPTION (GSplat)
 # ══════════════════════════════════════════════════════════════════════
@@ -50,7 +70,7 @@ def _get_voice():
 @router.post("/perception/scenes")
 async def create_scene(property_id: int, request: Request):
     """Start GSplat scene creation for a property."""
-    mgr = _get_perception()
+    mgr = _resolve_component(_get_perception, "Perception")
     scene = await mgr.create_scene(property_id)
     return {
         "scene_id": scene.scene_id,
@@ -64,12 +84,12 @@ async def create_scene(property_id: int, request: Request):
 @router.get("/perception/scenes")
 async def list_scenes(property_id: int = None):
     """List all GSplat scenes, optionally filtered by property."""
-    return _get_perception().list_scenes(property_id)
+    return _resolve_component(_get_perception, "Perception").list_scenes(property_id)
 
 @router.get("/perception/scenes/{scene_id}")
 async def get_scene(scene_id: str):
     """Get scene details and WebGL viewer configuration."""
-    mgr = _get_perception()
+    mgr = _resolve_component(_get_perception, "Perception")
     scene = mgr.get_scene(scene_id)
     if not scene:
         raise HTTPException(404, "Scene not found")
@@ -86,7 +106,7 @@ async def get_scene(scene_id: str):
 @router.get("/perception/scenes/{scene_id}/viewer")
 async def get_viewer_config(scene_id: str):
     """Get WebGL viewer configuration for embedding."""
-    config = _get_perception().get_viewer_config(scene_id)
+    config = _resolve_component(_get_perception, "Perception").get_viewer_config(scene_id)
     if not config:
         raise HTTPException(404, "Scene not found")
     return config
@@ -103,7 +123,7 @@ async def run_inspection(property_id: int, num_images: int = 10, request: Reques
     Stage 1: Fast YOLOv12 scan (<5s)
     Stage 2: Deep CracksGPT analysis (~30min simulated)
     """
-    orch = _get_inspection()
+    orch = _resolve_component(_get_inspection, "Inspection")
 
     # Generate synthetic test images for demo
     images = [np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8)
@@ -116,6 +136,35 @@ async def run_inspection(property_id: int, num_images: int = 10, request: Reques
         property_id=property_id,
         locations=locations,
     )
+
+    # Prepare serialized defect dicts for downstream modules
+    def serialize_defect_obj(d):
+        return {
+            "defect_id": d.defect_id,
+            "category": d.category.value,
+            "severity": d.severity.value,
+            "confidence": d.confidence,
+            "location": d.location_description,
+            "bbox": list(d.bbox),
+        }
+
+    stage1_serial = [serialize_defect_obj(d) for d in report.stage1_defects]
+    stage2_serial = [serialize_defect_obj(d) for d in report.stage2_defects]
+
+    # Thermal analysis (if available from orchestrator)
+    thermal_findings = []
+    try:
+        thermal_images = getattr(orch, 'thermal_images', [])
+        thermal_findings = analyze_thermal_images(thermal_images)
+    except Exception:
+        thermal_findings = []
+
+    # CracksGPT narratives
+    narratives = generate_narratives(stage2_serial + stage1_serial)
+
+    # Repair estimator - use property value if available, else fall back
+    property_value = getattr(report, 'property_value', None) or (report.property_id * 1000)
+    repair_est = estimate_repairs(stage2_serial + stage1_serial, property_value)
 
     # Serialize defects
     def serialize_defect(d):
@@ -159,12 +208,15 @@ async def run_inspection(property_id: int, num_images: int = 10, request: Reques
             "cross_referenced": report.stage2_cross_referenced,
             "insurance_ready": report.insurance_ready,
         },
+        "narratives": narratives,
+        "thermal_findings": thermal_findings,
+        "repair_estimate": repair_est,
     }
 
 @router.get("/inspection/reports/{report_id}")
 async def get_report(report_id: str):
     """Retrieve a completed inspection report."""
-    report = _get_inspection().get_report(report_id)
+    report = _resolve_component(_get_inspection, "Inspection").get_report(report_id)
     if not report:
         raise HTTPException(404, "Report not found")
     return {"report_id": report.report_id, "condition": report.overall_condition,
@@ -178,13 +230,13 @@ async def get_report(report_id: str):
 @router.get("/iot/{property_id}/snapshot")
 async def iot_snapshot(property_id: int):
     """Get current environmental snapshot with PMV heatmap data."""
-    iot = _get_iot()
+    iot = _resolve_component(_get_iot, "IoT")
     return iot.get_environmental_snapshot(property_id)
 
 @router.post("/iot/{property_id}/hvac")
 async def hvac_control(property_id: int, room: str, target_temp: float):
     """Bi-directional HVAC control — set target temperature from XR tour."""
-    iot = _get_iot()
+    iot = _resolve_component(_get_iot, "IoT")
     result = await iot.send_hvac_command(property_id, room, target_temp)
     return result
 
@@ -198,14 +250,14 @@ async def create_voice_session(
     property_id: int, language: str = "en", gender: str = "neutral",
 ):
     """Start a voice assistant session for a property tour."""
-    va = _get_voice()
+    va = _resolve_component(_get_voice, "Voice")
     session_id = va.create_session(property_id, language, gender)
     return {"session_id": session_id, "language": language, "status": "active"}
 
 @router.post("/voice/{session_id}/text")
 async def voice_text_input(session_id: str, text: str):
     """Send text input to voice assistant (keyboard mode)."""
-    va = _get_voice()
+    va = _resolve_component(_get_voice, "Voice")
     result = await va.process_text(session_id, text)
     if "error" in result:
         raise HTTPException(404, result["error"])
@@ -214,7 +266,7 @@ async def voice_text_input(session_id: str, text: str):
 @router.post("/voice/{session_id}/audio")
 async def voice_audio_input(session_id: str, file: UploadFile = File(...)):
     """Send audio input to voice assistant (microphone mode)."""
-    va = _get_voice()
+    va = _resolve_component(_get_voice, "Voice")
     audio_bytes = await file.read()
     result = await va.process_audio(session_id, audio_bytes)
     return result
@@ -222,11 +274,31 @@ async def voice_audio_input(session_id: str, file: UploadFile = File(...)):
 @router.post("/voice/{session_id}/position")
 async def update_position(session_id: str, room: str = None, x: float = 0, y: float = 0, z: float = 1.5):
     """Update user's spatial position in the tour."""
-    va = _get_voice()
+    va = _resolve_component(_get_voice, "Voice")
     va.update_spatial_context(session_id, room, (x, y, z))
     return {"status": "updated", "room": room}
 
 @router.get("/voice/{session_id}")
 async def voice_session_info(session_id: str):
     """Get voice session status and conversation stats."""
-    return _get_voice().get_session_info(session_id)
+    return _resolve_component(_get_voice, "Voice").get_session_info(session_id)
+
+
+@router.get("/phase2/status")
+async def phase2_status():
+    """Report whether each phase 2 subsystem can be initialized."""
+    return {
+        "phase": 2,
+        "services": {
+            "perception": _probe_component(_get_perception, "Perception"),
+            "inspection": _probe_component(_get_inspection, "Inspection"),
+            "iot": _probe_component(_get_iot, "IoT"),
+            "voice": _probe_component(_get_voice, "Voice"),
+        },
+        "routes": [
+            "/api/v1/perception/scenes",
+            "/api/v1/inspection/scan",
+            "/api/v1/iot/{property_id}/snapshot",
+            "/api/v1/voice/sessions",
+        ],
+    }
