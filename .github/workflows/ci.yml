@@ -1,0 +1,113 @@
+name: PropOS CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20"
+
+jobs:
+  backend-test:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: propos
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: propos_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 3s --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+          pip install ruff mypy
+
+      - name: Lint
+        run: cd backend && ruff check app/ --select E,W,F,I
+
+      - name: Type check
+        run: cd backend && mypy app/ --ignore-missing-imports --no-strict-optional || true
+
+      - name: Run tests
+        env:
+          DATABASE_URL: postgresql+asyncpg://propos:test@localhost:5432/propos_test
+          REDIS_URL: redis://localhost:6379/0
+        run: cd backend && python -m pytest app/tests/ -v --tb=short
+
+  smart-contract-test:
+    name: Solidity Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install Hardhat
+        run: cd contracts && npm install
+      - name: Compile contracts
+        run: cd contracts && npx hardhat compile
+      - name: Run tests
+        run: cd contracts && npx hardhat test
+
+  noir-circuit-test:
+    name: Noir ZKP Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Nargo
+        run: |
+          curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash
+          noirup --version 0.36.0
+      - name: Test circuit
+        run: cd contracts/circuits/proof_of_funds && nargo test
+
+  frontend-build:
+    name: Frontend Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: cd frontend && npm ci
+      - run: cd frontend && npm run build
+      - run: cd frontend && npm run lint
+
+  docker-build:
+    name: Docker Build
+    needs: [backend-test, frontend-build]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build images
+        run: docker compose build
+      - name: Health check
+        run: |
+          docker compose up -d
+          sleep 10
+          curl -f http://localhost:8000/health || exit 1
+          docker compose down

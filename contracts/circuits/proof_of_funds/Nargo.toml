@@ -1,0 +1,7 @@
+[package]
+name = "proof_of_funds"
+type = "bin"
+authors = ["PropOS Team"]
+compiler_version = ">=0.36.0"
+
+[dependencies]
