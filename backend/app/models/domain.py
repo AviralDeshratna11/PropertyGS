@@ -47,7 +47,7 @@ class EscrowStatus(str, enum.Enum):
 class Property(Base):
     __tablename__ = "properties"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     external_id = Column(String(128), unique=True, index=True, comment="DLD / MLS ID")
     title = Column(String(512), nullable=False)
     description = Column(Text)

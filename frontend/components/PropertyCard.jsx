@@ -12,7 +12,7 @@ export default function PropertyCard({p}){
         <p className="mt-2 text-sky-600 font-bold">${p.asking_price_usd?.toLocaleString()}</p>
         <div className="mt-4 flex items-center justify-between">
           <div className="text-xs text-gray-500">{p.bedrooms || '-'} bd • {p.bathrooms || '-'} ba • {p.area_sqft || '-'} sqft</div>
-          <Link href={`/property/${p.id}`}><a className="text-sm text-white bg-sky-600 px-3 py-1 rounded">View</a></Link>
+          <Link href={`/property/${p.id}`} className="text-sm text-white bg-sky-600 px-3 py-1 rounded">View</Link>
         </div>
       </div>
     </div>

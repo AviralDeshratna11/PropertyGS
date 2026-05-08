@@ -2,42 +2,25 @@
 # ═══════════════════════════════════════
 
 # ── Web Framework ─────────────────────
-fastapi==0.115.0
-uvicorn[standard]==0.32.0
-pydantic==2.9.0
-pydantic-settings==2.5.0
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
 
 # ── Database ──────────────────────────
-sqlalchemy[asyncio]==2.0.35
-asyncpg==0.30.0
-alembic==1.14.0
+sqlalchemy[asyncio]
+aiosqlite
 
 # ── Redis ─────────────────────────────
-redis[hiredis]==5.2.0
+redis[hiredis]
 
 # ── HTTP Client ───────────────────────
-httpx==0.27.2
-
-# ── AI/ML Core ────────────────────────
-torch==2.5.0
-numpy==2.1.0
-
-# ── Computer Vision (Phase 2) ─────────
-ultralytics==8.3.0
-Pillow==11.0.0
-opencv-python-headless==4.10.0
-
-# ── IoT / MQTT (Phase 2) ─────────────
-paho-mqtt==2.1.0
-
-# ── Blockchain ────────────────────────
-web3==7.4.0
-eth-account==0.13.0
+httpx
 
 # ── Utilities ─────────────────────────
-python-dotenv==1.0.1
-python-multipart==0.0.12
+python-dotenv
+python-multipart
 
 # ── Testing ───────────────────────────
-pytest==8.3.0
-pytest-asyncio==0.24.0
+pytest
+pytest-asyncio

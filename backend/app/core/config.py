@@ -13,11 +13,11 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
 
     # ── Database ──────────────────────────────────────────────────────
-    DATABASE_URL: str = "postgresql+asyncpg://propos:propos@db:5432/propos"
-    REDIS_URL: str = "redis://redis:6379/0"
+    DATABASE_URL: str = "sqlite+aiosqlite:///./propos.db"
+    REDIS_URL: str = "redis://localhost:6379/0"
 
     # ── CORS ──────────────────────────────────────────────────────────
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "https://app.propos.io"]
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:3001", "https://app.propos.io"]
 
     # ── Lifestyle Search APIs ─────────────────────────────────────────
     SHADOWMAP_API_KEY: str = ""          # Sunlight / irradiance simulation

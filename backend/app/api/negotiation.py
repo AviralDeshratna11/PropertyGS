@@ -153,7 +153,6 @@ async def execute_round(session_id: str, request: Request):
     )
 
     from app.agents.negotiation_engine import NegotiationEnvironment, MAPPOAgent
-    import numpy as np
 
     env = NegotiationEnvironment(buyer_config, seller_config, market)
     env.reset()
