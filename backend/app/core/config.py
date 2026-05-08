@@ -67,6 +67,37 @@ class Settings(BaseSettings):
     MARL_ENTROPY_COEFF: float = 0.01
     MARL_VALUE_LOSS_COEFF: float = 0.5
 
+    # ── PHASE 2: Perception (GSplat) ──────────────────────────────────
+    GSPLAT_MODEL_PATH: str = ""         # Path to .splat files or model weights
+    GSPLAT_ENABLE: bool = True
+    GSPLAT_MAX_GAUSSIANS: int = 1_000_000
+    GSPLAT_SH_DEGREE: int = 1           # 0=mobile, 1=balanced, 2/3=desktop
+
+    # ── PHASE 2: Inspection (YOLOv12 / RT-DETR / CracksGPT) ───────────
+    YOLOV12_MODEL_PATH: str = ""        # Path to YOLOv12 weights
+    RTDETR_MODEL_PATH: str = ""         # Path to RT-DETR weights
+    CRACKSGPT_MODEL_PATH: str = ""      # Path to CracksGPT VLM weights
+    INSPECTION_ENABLE: bool = True
+    INSPECTION_CONFIDENCE_THRESHOLD: float = 0.35
+    INSPECTION_NMS_THRESHOLD: float = 0.45
+    INSPECTION_DEVICE: str = "cpu"      # "cpu" or "cuda"
+
+    # ── PHASE 2: Voice (STT/TTS/LLM) ──────────────────────────────────
+    VOICE_ENABLE: bool = True
+    VOICE_STT_PROVIDER: str = "openai"  # "openai" or "local"
+    VOICE_TTS_PROVIDER: str = "openai"  # "openai" or "elevenlabs"
+    VOICE_LLM_CONTEXT_SIZE: int = 2048
+    ELEVENLABS_API_KEY: str = ""        # For alternative TTS
+
+    # ── PHASE 2: IoT ──────────────────────────────────────────────────
+    IOT_ENABLE: bool = True
+    IOT_MQTT_BROKER: str = "mqtt://localhost:1883"
+    IOT_SENSOR_POLL_INTERVAL_SEC: int = 30
+
+    # ── PHASE 2: XR/AR (WebXR, Hand Tracking) ────────────────────────
+    XR_ENABLE: bool = False             # Not yet implemented
+    XR_WEBXR_SUPPORTED: bool = False
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

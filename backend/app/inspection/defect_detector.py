@@ -21,9 +21,16 @@ References: PropOS Inspection Layer specification
 """
 
 import numpy as np
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+try:
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    logger = logging.getLogger("propos.inspection")
+    logger.warning("PyTorch not available — Inspection will use simulation mode")
+
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Tuple, Any
 from enum import Enum
@@ -32,6 +39,7 @@ import uuid
 import asyncio
 import time
 import httpx
+from app.core.config import settings
 
 logger = logging.getLogger("propos.inspection")
 
@@ -187,7 +195,7 @@ class InspectionReport:
 # §2  YOLOv12 — Attention-Centric Real-Time Detector
 # ══════════════════════════════════════════════════════════════════════
 
-class AreaAttentionModule(nn.Module):
+class AreaAttentionModule(nn.Module if TORCH_AVAILABLE else object):
     """
     Area Attention Module (A²) from YOLOv12.
 
@@ -198,18 +206,21 @@ class AreaAttentionModule(nn.Module):
     """
 
     def __init__(self, dim: int, num_heads: int = 8, area_size: int = 7):
-        super().__init__()
+        if TORCH_AVAILABLE:
+            super().__init__()
         self.dim = dim
         self.num_heads = num_heads
         self.area_size = area_size
-        self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
-
-        self.qkv = nn.Linear(dim, dim * 3)
-        self.proj = nn.Linear(dim, dim)
-        self.norm = nn.LayerNorm(dim)
+        if TORCH_AVAILABLE:
+            self.head_dim = dim // num_heads
+            self.scale = self.head_dim ** -0.5
+            self.qkv = nn.Linear(dim, dim * 3)
+            self.proj = nn.Linear(dim, dim)
+            self.norm = nn.LayerNorm(dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if not TORCH_AVAILABLE:
+            return x
         B, N, C = x.shape
         residual = x
         x = self.norm(x)
@@ -291,17 +302,29 @@ class YOLOv12Detector:
         }
 
     def load_model(self):
-        """Load YOLOv12 weights."""
-        if self.model_path:
-            try:
-                self.model = torch.load(self.model_path, map_location=self.device,
-                                       weights_only=False)
-                logger.info("YOLOv12 model loaded")
-            except Exception as e:
-                logger.warning(f"Could not load YOLOv12 weights: {e}. Using simulation mode.")
-                self.model = None
-        else:
-            logger.info("YOLOv12 running in simulation mode (no weights)")
+        """Load YOLOv12 weights from config path or use simulation mode."""
+        model_path = settings.YOLOV12_MODEL_PATH or self.model_path
+        
+        if not model_path:
+            logger.info("YOLOv12 running in simulation mode (no model path configured)")
+            self.model = None
+            return
+        
+        if not TORCH_AVAILABLE:
+            logger.warning("PyTorch not available — YOLOv12 simulation mode only")
+            self.model = None
+            return
+        
+        try:
+            import torch
+            self.model = torch.load(model_path, map_location=self.device, weights_only=False)
+            logger.info(f"YOLOv12 model loaded from {model_path}")
+        except FileNotFoundError:
+            logger.warning(f"Model file not found: {model_path} — using simulation mode")
+            self.model = None
+        except Exception as e:
+            logger.warning(f"Could not load YOLOv12 weights: {e}. Using simulation mode.")
+            self.model = None
 
     def preprocess(self, image: np.ndarray) -> torch.Tensor:
         """Resize and normalize image for YOLOv12 input."""

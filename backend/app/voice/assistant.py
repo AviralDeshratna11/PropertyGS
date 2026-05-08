@@ -119,6 +119,10 @@ class SpeechToText:
             return await self._transcribe_local(audio_bytes, language)
 
     async def _transcribe_openai(self, audio_bytes: bytes, language: str) -> Dict:
+        if not settings.OPENAI_API_KEY:
+            logger.warning("OPENAI_API_KEY not set — STT unavailable")
+            return {"text": "", "language": language or "en", "confidence": 0.0, "error": "OpenAI API key not configured"}
+        
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 files = {"file": ("audio.webm", audio_bytes, "audio/webm")}
@@ -131,7 +135,9 @@ class SpeechToText:
                     headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}"},
                     files=files, data=data,
                 )
+                resp.raise_for_status()
                 result = resp.json()
+                logger.info(f"STT success: {len(result.get('text', ''))} chars")
                 return {
                     "text": result.get("text", ""),
                     "language": language or "en",
@@ -168,27 +174,51 @@ class TextToSpeech:
         self, text: str, language: Language, gender: VoiceGender
     ) -> bytes:
         """Convert text to speech audio bytes."""
+        if not settings.OPENAI_API_KEY and settings.VOICE_TTS_PROVIDER == "openai":
+            logger.warning("OPENAI_API_KEY not set — TTS unavailable")
+            return b""
+
         voice = self.VOICE_MAP.get((language, gender), "nova")
 
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
-                    "https://api.openai.com/v1/audio/speech",
-                    headers={
-                        "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": "tts-1",
-                        "input": text,
-                        "voice": voice,
-                        "response_format": "mp3",
-                    },
-                )
-                return resp.content
+            if settings.VOICE_TTS_PROVIDER == "elevenlabs" and settings.ELEVENLABS_API_KEY:
+                return await self._synthesize_elevenlabs(text, voice)
+            else:
+                return await self._synthesize_openai(text, voice)
         except Exception as e:
             logger.error(f"TTS error: {e}")
             return b""
+
+    async def _synthesize_openai(self, text: str, voice: str) -> bytes:
+        """Synthesize with OpenAI TTS."""
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api.openai.com/v1/audio/speech",
+                headers={
+                    "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "tts-1",
+                    "input": text[:4096],  # OpenAI limit
+                    "voice": voice,
+                    "response_format": "mp3",
+                },
+            )
+            resp.raise_for_status()
+            logger.info(f"TTS success: {len(resp.content)} bytes")
+            return resp.content
+
+    async def _synthesize_elevenlabs(self, text: str, voice: str) -> bytes:
+        """Synthesize with ElevenLabs TTS (alternative)."""
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"https://api.elevenlabs.io/v1/text-to-speech/{voice}",
+                headers={"xi-api-key": settings.ELEVENLABS_API_KEY},
+                json={"text": text[:1000], "model_id": "eleven_monolingual_v1"},
+            )
+            resp.raise_for_status()
+            return resp.content
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -421,40 +451,60 @@ class VoiceAssistant:
             messages.insert(0, msg)
 
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                if settings.LLM_PROVIDER == "anthropic":
-                    resp = await client.post(
-                        "https://api.anthropic.com/v1/messages",
-                        headers={
-                            "x-api-key": settings.ANTHROPIC_API_KEY,
-                            "anthropic-version": "2023-06-01",
-                            "content-type": "application/json",
-                        },
-                        json={
-                            "model": settings.LLM_MODEL,
-                            "max_tokens": 300,
-                            "system": system_prompt,
-                            "messages": messages,
-                        },
-                    )
-                    data = resp.json()
-                    return data["content"][0]["text"]
-                else:
-                    resp = await client.post(
-                        "https://api.openai.com/v1/chat/completions",
-                        headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}"},
-                        json={
-                            "model": "gpt-4o-mini",
-                            "messages": [{"role": "system", "content": system_prompt}] + messages,
-                            "max_tokens": 300,
-                        },
-                    )
-                    data = resp.json()
-                    return data["choices"][0]["message"]["content"]
+            if settings.LLM_PROVIDER == "anthropic":
+                if not settings.ANTHROPIC_API_KEY:
+                    logger.warning("ANTHROPIC_API_KEY not set — using fallback")
+                    return self._fallback_response(session, user_text)
+                return await self._generate_with_claude(system_prompt, messages)
+            else:
+                if not settings.OPENAI_API_KEY:
+                    logger.warning("OPENAI_API_KEY not set — using fallback")
+                    return self._fallback_response(session, user_text)
+                return await self._generate_with_openai(system_prompt, messages)
 
         except Exception as e:
             logger.error(f"LLM response error: {e}")
             return self._fallback_response(session, user_text)
+
+    async def _generate_with_claude(self, system_prompt: str, messages: List[Dict]) -> str:
+        """Call Claude API."""
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": settings.ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": settings.LLM_MODEL,
+                    "max_tokens": 300,
+                    "system": system_prompt,
+                    "messages": messages,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            logger.info(f"Claude response: {len(data['content'][0]['text'])} chars")
+            return data["content"][0]["text"]
+
+    async def _generate_with_openai(self, system_prompt: str, messages: List[Dict]) -> str:
+        """Call GPT API."""
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}"},
+                json={
+                    "model": "gpt-4o-mini",
+                    "messages": [{"role": "system", "content": system_prompt}] + messages,
+                    "max_tokens": 300,
+                    "temperature": 0.7,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            logger.info(f"GPT response: {len(data['choices'][0]['message']['content'])} chars")
+            return data["choices"][0]["message"]["content"]
 
     def _fallback_response(self, session: VoiceSession, user_text: str) -> str:
         """Rule-based fallback when LLM is unavailable."""
